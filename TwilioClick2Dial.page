@@ -1,0 +1,413 @@
+<apex:page id="page" controller="TwilioClientController" standardStylesheets="false" showHeader="false" docType="html-5.0">
+
+ <script type="text/javascript" src="//media.twiliocdn.com/sdk/js/client/v1.4/twilio.min.js"></script>
+ <script type="text/javascript" src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.2/jquery.min.js"></script>
+ <!-- Lightning CTI-->
+ <script src="/support/api/33.0/interaction.js"></script>
+ <script src="/support/api/38.0/lightning/opencti_min.js"></script>
+ 
+ <apex:stylesheet value="/resource/LightningLook/assets/styles/salesforce-lightning-design-system-vf.min.css"/>
+
+ 
+ <script type="text/javascript">
+     //getting token from twilio api
+     Twilio.Device.setup("{! token }");
+     
+     //phone numbers on screen gets clickable 
+     sforce.opencti.enableClickToDial({callback: function() {}});  
+                      
+     var leadNumber;
+     var RecordId;
+     var leadId;
+     var callsid;  
+     var childCallSid;
+                 
+     //On click this function executes   
+     sforce.opencti.onClickToDial({listener : function(payload) {
+            sforce.opencti.setSoftphonePanelVisibility({
+                visible : true,
+                callback : function() {
+		     //getting info of record
+                     leadNumber = payload.number;
+                     RecordId = payload.recordId;
+                     leadId = payload.recordId;
+                     leadObject(payload.recordId);
+                     
+                     document.getElementById('task_block').style.display = 'none';
+                     document.getElementById('email_block').style.display = 'none';
+                     document.getElementById('status_block').style.display = 'block';
+                     document.getElementById('voicemailmessage').style.display = 'none'; 
+		     document.getElementById('hanguperror').innerHTML = "";
+                     document.getElementById('voicemailerror').innerHTML = "";
+                     
+                     sforce.connection.sessionId = "{!$Api.Session_ID}";
+                     
+                     params = {"PhoneNumber": payload.number, "Id":payload.recordId ,"UserId":sforce.connection.getUserInfo().userId};
+                     
+                     Twilio.Device.connect(params);
+                   	 
+		  	 Twilio.Device.connect(function (conn) {
+			        callsid = conn.parameters.CallSid;
+			        console.log(callsid);
+			        
+			        setTimeout(function(){
+				// to get info of child call for voicemail functionality	
+			            $.ajax({
+			                  url: 'https://api.twilio.com/2010-04-01/Accounts/{!TwilioConfig.AccountSid__c}/Calls.json?ParentCallSid='+callsid,
+			                  type: 'GET',
+			                  crossDomain: true,
+			                  headers: {
+			                    "Authorization": "Basic " + btoa('{!TwilioConfig.AccountSid__c}' + ":" + '{!TwilioConfig.AuthToken__c}'),
+			                    "content-type":"application/x-www-form-urlencoded"
+			                  },
+			                  success: function(data) {     
+			                        console.log('childcall::'+data.calls["0"].sid);
+			                        childCallSid = data.calls["0"].sid; 
+			                        
+			                  },
+			                  error: function(e) {
+			                    console.log('childcallFail::');
+			                  }
+			               });
+		        
+		        	}, 3000);
+			        
+			        
+		         });
+			    
+			    
+		       }
+            });
+        }   
+     });
+     
+        
+    function showtaskpanel() {
+        document.getElementById('task_block').style.display = 'block';
+        document.getElementById('email_block').style.display = 'none';
+        document.getElementById('status_block').style.display = 'none';
+    }
+    
+    function showemailpanel(){
+        document.getElementById('task_block').style.display = 'none';
+        document.getElementById('email_block').style.display = 'block';
+        document.getElementById('status_block').style.display = 'none';
+    }
+    
+    function backtohome(){
+        document.getElementById('task_block').style.display = 'none';
+        document.getElementById('email_block').style.display = 'none';
+        document.getElementById('status_block').style.display = 'block';
+    }
+    
+    function hangup() {
+      Twilio.Device.disconnectAll();
+      document.getElementById('hanguperror').innerHTML = "Call Ended";
+      
+    }
+    
+    function voicemail() {
+
+      var fromCallerId;
+      var country = document.getElementById('country').innerHTML;
+      leadObject(leadId);
+      
+      if(country && country.toUpperCase() === "UK"){
+      	fromCallerId = "{!TwilioConfig.CallerIdUk__c}";
+      }else{
+      	fromCallerId = "{!TwilioConfig.CallerId__c}";
+      }  
+
+      console.log('childcallVoicemail::'+childCallSid);
+
+ 		$.ajax({
+	       url: 'https://api.twilio.com/2010-04-01/Accounts/{!TwilioConfig.AccountSid__c}/Calls/'+childCallSid+'.json',
+	       type: 'POST',
+	       crossDomain: true,
+	       data: {			          	
+	         "Url": document.getElementById('page:form:voicemailaudio').value	
+	       },
+	       headers: {
+	         "Authorization": "Basic " + btoa('{!TwilioConfig.AccountSid__c}' + ":" + '{!TwilioConfig.AuthToken__c}'),
+	         "content-type":"application/x-www-form-urlencoded"
+	       },
+	       success: function(data) {     
+	       	document.getElementById('voicemailmessage').style.display = 'block'; 
+	       			document.getElementById('voicemailerror').innerHTML = "Voicemail sent successfully";	
+	       },
+	       error: function(e) {
+	       	document.getElementById('voicemailmessage').style.display = 'block'; 
+	       			document.getElementById('voicemailerror').innerHTML = "Something went wrong while sending voicemail.";  
+	       }
+    	 });
+
+       
+       
+    }
+    
+    function redial() {
+      Twilio.Device.disconnectAll();
+      params = {"PhoneNumber": leadNumber, "Id":RecordId ,"UserId":sforce.connection.getUserInfo().userId};
+      Twilio.Device.connect(params);
+      document.getElementById('hanguperror').innerHTML = "";
+      
+    }
+    
+    function savecomment() {
+      document.getElementById('statusmessage').style.display = 'block';
+      document.getElementById('voicemailmessage').style.display = 'none'; 
+    }
+    
+      
+    // Handle incoming calls from Twilio
+    Twilio.Device.incoming(function (conn) {
+       if (confirm('Accept incoming call from ' + conn.parameters.From + '?')){
+           conn.accept();
+       }
+    });      
+    
+    </script>
+    <apex:form id="form" >
+        <apex:actionFunction action="{!LeadDetail}" name="leadObject" rerender="leadDataCard,countryvalue,statusSection,emailSection,taskSection">
+            <apex:param name="leadId" assignto="{!LeadId}" value=""/>
+        </apex:actionFunction>
+        
+        <apex:outputpanel id="countryvalue">
+        <span id="country" style="display:none">{!leadObj[0].Country__c}</span>
+        </apex:outputpanel>
+        
+        <div class="slds">
+            <div>   
+                <br/>
+                
+                <div class="slds-notify_container" id="hangupmessage">
+				   <div class="slds-notify slds-notify--alert slds-theme--alert-texture" role="alert">
+				            <div class="message errorM3" role="alert">
+				               <table border="0" cellpadding="0" cellspacing="0" class="messageTable" style="padding:0px;margin:0px;">
+				                  <tbody>
+				                     <tr valign="top">
+				                        <td class="messageCell">
+				                           <div class="messageText">
+				                              <div id="hanguperror"></div>
+				                           </div>
+				                        </td>
+				                     </tr>
+				                     <tr>
+				                        <td></td>
+				                        <td></td>
+				                     </tr>
+				                  </tbody>
+				               </table>
+				            </div>
+				   </div>
+				</div>
+				<br/>
+				
+                <center> 
+                <apex:commandButton styleclass="slds-button slds-button--brand" style="background-color:#c23934;border: none;" value="Hangup" onclick="hangup();return false;"/>
+                &nbsp;&nbsp;&nbsp;&nbsp;
+                <apex:commandButton styleclass="slds-button slds-button--brand" style="background-color:#55a51a;border: none;" value="Redial" onclick="redial();return false;"/><br/>
+                <br/>
+                
+                
+                <div class="slds-notify_container" id="voicemailmessage">
+				   <div class="slds-notify slds-notify--alert slds-theme--alert-texture" role="alert">
+				            <div class="message errorM3" role="alert">
+				               <table border="0" cellpadding="0" cellspacing="0" class="messageTable" style="padding:0px;margin:0px;">
+				                  <tbody>
+				                     <tr valign="top">
+				                        <td class="messageCell">
+				                           <div class="messageText">
+				                              <div id="voicemailerror"></div>
+				                           </div>
+				                        </td>
+				                     </tr>
+				                     <tr>
+				                        <td></td>
+				                        <td></td>
+				                     </tr>
+				                  </tbody>
+				               </table>
+				            </div>
+				   </div>
+				</div>
+				
+				<apex:outputPanel id="voicemailoptionsection">
+	                <div class="slds-form-element">
+	                  <label class="slds-form-element__label">Voicemail Audio</label>
+	                  <div class="slds-form-element__control">
+	                    <div class="slds-select_container">
+	                        <apex:selectList size="1" id="voicemailaudio" value="{!selectedValue}" styleclass="slds-select">
+	                           <apex:selectOptions value="{!voicemailOptions}"/>
+	                        </apex:selectList>
+	                    </div>
+	                  </div>
+	                </div>
+                </apex:outputPanel>
+                <br/>
+                <apex:commandButton styleclass="slds-button slds-button--brand" style="border: none;" value="Leave Voicemail" onclick="voicemail();return false;"/>
+                <h6 style="color:#c23934">*Press leave voicemail button when you hear the beep sound.</h6>
+                </center>
+                <br/>
+                
+                <div class="slds-card">
+                    <div class="slds-card__header slds-grid">
+                            <div class="slds-media slds-media--center slds-has-flexi-truncate">
+                              <div class="slds-media__body">
+                                <h2 class="slds-text-heading--small slds-truncate">f Lead Information</h2>
+                              </div>
+                            </div>
+                        <div class="slds-no-flex">
+                        </div>
+                    </div>
+                    <apex:outputpanel id="leadDataCard">
+                        <div class="slds-card__body">
+                            <center> 
+                            <table styleclass="slds-table slds-table--bordered" style="border-collapse: collapse;">
+                            <tr><td style="padding-left: 12px;"><apex:outputLabel styleclass="slds-text-body--regular" value="First Name"/></td><td>{!leadObj[0].First_Name__c}</td></tr>
+                            <tr><td style="padding-left: 12px;"><apex:outputLabel styleclass="slds-text-body--regular" value="Last Name"/></td><td>{!leadObj[0].Last_Name__c}</td></tr>
+                            <tr><td style="padding-left: 12px;"><apex:outputLabel styleclass="slds-text-body--regular" value="Phone"/></td><td>{!leadObj[0].Phone__c}</td></tr>
+                            <tr><td style="padding-left: 12px;"><apex:outputLabel styleclass="slds-text-body--regular" value="Email"/></td><td>{!leadObj[0].Email__c}</td></tr>
+                            </table>
+                            </center> 
+                        </div> 
+                    </apex:outputpanel>
+                </div>                        
+                
+                <br/>
+
+            </div>
+            
+            <div id="status_block" style="display:none">
+            	<div id="statusmessage">
+	                <apex:outputPanel id="statusSection">
+	                    <div class="slds-notify_container">
+	                       <div class="slds-notify slds-notify--alert slds-theme--alert-texture" role="alert">
+	                         <button class="slds-button slds-button--icon-inverse slds-notify__close">          
+	                           <span class="slds-assistive-text">Close</span>
+	                         </button>
+	                         <span class="slds-assistive-text">Info</span>
+	                         <apex:pageMessages id="pageMessage0" />
+	                       </div>
+	                    </div>
+	                    
+	                    
+                     	<div class="slds-form-element">
+			                <label class="slds-form-element__label">Comments</label>
+			                <div class="slds-form-element__control">
+			                  <apex:inputTextArea styleclass="slds-textarea" value="{!comments}"/>
+			                </div>
+		                </div>
+		                
+		                <br/>
+		                <center>
+		                <apex:commandButton styleclass="slds-button slds-button--brand" value="Save Comment" action="{!updateLead}" rerender="statusSection" />
+		                </center>
+		                <br/>
+		                <br/>
+		                <center>
+		                    <apex:commandButton value="Create Task" styleclass="slds-button slds-button--neutral" onclick="showtaskpanel();return false;" rerender="voicemailoptionsection"/>&nbsp;&nbsp;&nbsp;&nbsp;
+		                    <apex:commandButton value="Send Email" styleclass="slds-button slds-button--neutral" onclick="showemailpanel();return false;" rerender="voicemailoptionsection"/>   
+		                </center>
+		                <br/>
+		                <br/><br/>
+		                <br/>
+		                
+	                </apex:outputPanel>
+            	</div>
+          	</div>
+        
+            
+            <div id="task_block" style="display:none">
+                
+                    <apex:outputPanel id="taskSection">
+                        <div class="slds-notify_container">
+                           <div class="slds-notify slds-notify--alert slds-theme--alert-texture" role="alert">
+                             <button class="slds-button slds-button--icon-inverse slds-notify__close">          
+                               <span class="slds-assistive-text">Close</span>
+                             </button>
+                             <span class="slds-assistive-text">Info</span>
+                             <apex:pageMessages id="pageMessage1" />
+                           </div>
+                        </div>
+                        
+                        
+                        <div class="slds-form-element">
+	                      <label class="slds-form-element__label">Type</label>
+	                      <div class="slds-form-element__control">
+	                        <div class="slds-select_container">
+	                            <apex:selectList id="type" size="1" value="{!typeSelectedValue}" styleclass="slds-select">
+	                                <apex:selectOptions value="{!typeOptions}"/>
+	                            </apex:selectList>
+	                        </div>
+	                      </div>
+	                    </div>
+	
+	                    <br/>
+	                    <label class="slds-form-element__label" >Task Due Date</label>
+	                    <apex:input styleclass="slds-input" type="date" value="{!dueDate}"/>
+	                    <br/>
+	                
+	                    <div class="slds-form-element">
+	                      <label class="slds-form-element__label">Task Comment</label>
+	                      <div class="slds-form-element__control">
+	                        <apex:inputTextArea styleclass="slds-textarea" value="{!taskComment}"/>
+	                      </div>
+	                    </div>
+                    	<br/>
+                    	
+                    </apex:outputPanel>
+            
+                    
+                    <center>
+                        <apex:commandButton styleclass="slds-button slds-button--brand" value="Create" action="{!createTask}" rerender="taskSection,voicemailoptionsection"/>&nbsp;&nbsp;&nbsp;&nbsp;
+                        <apex:commandButton styleclass="slds-button slds-button--neutral" value="Back" onclick="backtohome();return false;"/>
+                    </center>
+                    <br/>
+                    <br/>
+            </div>
+            
+            <div id="email_block" style="display:none">
+                
+                    <apex:outputPanel id="emailSection">
+                        <div class="slds-notify_container">
+                           <div class="slds-notify slds-notify--alert slds-theme--alert-texture" role="alert">
+                             <button class="slds-button slds-button--icon-inverse slds-notify__close">          
+                               <span class="slds-assistive-text">Close</span>
+                             </button>
+                             <span class="slds-assistive-text">Info</span>
+                             <apex:pageMessages id="pageMessage2" />
+                           </div>
+                        </div>
+                        
+                        
+                          <div class="slds-form-element">
+		                      <label class="slds-form-element__label">Email Subject</label>
+		                      <div class="slds-form-element__control">
+		                        <apex:inputText value="{!emailSubject}" styleclass="slds-input" />
+		                      </div>
+		                    </div>
+		                
+		                    <br/>
+		                    
+		                    <div class="slds-form-element">
+		                      <label class="slds-form-element__label">Email Body</label>
+		                      <div class="slds-form-element__control">
+		                        <apex:inputTextArea styleclass="slds-textarea" value="{!emailBody}"/>
+		                      </div>
+		                    </div>
+		                    
+		                    <br/>
+                    </apex:outputPanel>
+		                
+                   <center>
+                       <apex:commandButton styleclass="slds-button slds-button--brand" value="Send Email" action="{!sendEmail}" rerender="emailSection,voicemailoptionsection"/>&nbsp;&nbsp;&nbsp;&nbsp;
+                       <apex:commandButton styleclass="slds-button slds-button--neutral" value="Back" onclick="backtohome();return false;"/>
+                   </center>
+                   <br/>
+                   <br/>
+                
+            </div>     
+        </div>    
+    </apex:form>
+</apex:page>
