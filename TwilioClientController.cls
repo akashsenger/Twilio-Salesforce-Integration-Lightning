@@ -7,8 +7,6 @@ Created Date : 16 May 2017
 
 Description : Call to twilio api and get App Id and call id in response then reesend Dial Xml to Twilio
 
-Author : akash senger
-
 ******************************/
 public class TwilioClientController {
     
